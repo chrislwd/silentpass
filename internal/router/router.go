@@ -108,6 +108,11 @@ func New(cfg *config.Config, deps *Deps) *gin.Engine {
 	webhookStore := webhook.NewMemoryStore()
 	_ = webhook.NewService(webhookStore)
 
+	// --- Account Stores ---
+	userStore := handler.NewMemoryUserStore()
+	tenantStore := handler.NewMemoryTenantStore()
+	apiKeyStore := handler.NewMemoryAPIKeyStore()
+
 	// --- Handlers ---
 	verificationHandler := handler.NewVerificationHandler(verificationSvc)
 	riskHandler := handler.NewRiskHandler(riskSvc)
@@ -117,6 +122,7 @@ func New(cfg *config.Config, deps *Deps) *gin.Engine {
 	statsHandler := handler.NewStatsHandler(statsStore, statsCollector)
 	logsHandler := handler.NewLogsHandler(logsStore)
 	billingHandler := handler.NewBillingHandler(billingStore)
+	accountHandler := handler.NewAccountHandler(userStore, tenantStore, apiKeyStore, tokenSvc)
 
 	// --- Health ---
 	r.GET("/health", func(c *gin.Context) {
@@ -172,6 +178,22 @@ func New(cfg *config.Config, deps *Deps) *gin.Engine {
 
 	v1.GET("/logs", logsHandler.List)
 	v1.GET("/billing/summary", billingHandler.Summary)
+
+	// --- Auth endpoints (no API key required) ---
+	authGroup := r.Group("/v1/auth")
+	{
+		authGroup.POST("/register", accountHandler.Register)
+		authGroup.POST("/login", accountHandler.Login)
+	}
+
+	// --- Account management (API key required) ---
+	account := v1.Group("/account")
+	{
+		account.POST("/api-keys", accountHandler.CreateAPIKey)
+		account.GET("/api-keys", accountHandler.ListAPIKeys)
+		account.DELETE("/api-keys/:id", accountHandler.DeleteAPIKey)
+		account.POST("/users", accountHandler.InviteUser)
+	}
 
 	return r
 }
