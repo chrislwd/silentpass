@@ -1,37 +1,30 @@
 package handler
 
 import (
+	"context"
 	"math/rand"
 	"net/http"
-	"sync"
 	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
 )
 
-// StatsCollector tracks real-time verification metrics.
+// StatsCollector tracks real-time verification metrics (in-memory counter).
 type StatsCollector struct {
-	mu               sync.RWMutex
-	totalRequests    int64
-	silentSuccess    int64
-	silentFallback   int64
-	otpSent          int64
-	otpVerified      int64
-	riskBlocked      int64
-	simSwapDetected  int64
+	totalRequests   int64
+	silentSuccess   int64
+	silentFallback  int64
+	otpSent         int64
+	otpVerified     int64
+	riskBlocked     int64
+	simSwapDetected int64
 }
 
 func NewStatsCollector() *StatsCollector {
-	s := &StatsCollector{}
-	// Seed with demo data
-	s.totalRequests = 124892
-	s.silentSuccess = 105825
-	s.silentFallback = 19067
-	s.otpSent = 18200
-	s.otpVerified = 17100
-	s.riskBlocked = 342
-	s.simSwapDetected = 89
-	return s
+	return &StatsCollector{
+		totalRequests: 124892, silentSuccess: 105825, silentFallback: 19067,
+		otpSent: 18200, otpVerified: 17100, riskBlocked: 342, simSwapDetected: 89,
+	}
 }
 
 func (s *StatsCollector) RecordSilentSuccess()  { atomic.AddInt64(&s.silentSuccess, 1); atomic.AddInt64(&s.totalRequests, 1) }
@@ -42,61 +35,98 @@ func (s *StatsCollector) RecordRiskBlocked()    { atomic.AddInt64(&s.riskBlocked
 func (s *StatsCollector) RecordSIMSwap()        { atomic.AddInt64(&s.simSwapDetected, 1) }
 
 type StatsHandler struct {
-	collector *StatsCollector
+	store     StatsStore
+	collector *StatsCollector // fallback for in-memory mode
 }
 
-func NewStatsHandler(collector *StatsCollector) *StatsHandler {
-	return &StatsHandler{collector: collector}
+func NewStatsHandler(store StatsStore, collector *StatsCollector) *StatsHandler {
+	return &StatsHandler{store: store, collector: collector}
 }
 
 // Dashboard handles GET /v1/stats/dashboard
 func (h *StatsHandler) Dashboard(c *gin.Context) {
+	tenantID := c.GetString("tenant_id")
+
+	if h.store != nil {
+		stats, err := h.store.Dashboard(c.Request.Context(), tenantID)
+		if err == nil && stats.TotalVerifications > 0 {
+			c.JSON(http.StatusOK, stats)
+			return
+		}
+	}
+
+	// Fallback to in-memory collector
+	h.memoryDashboard(c)
+}
+
+// RecentActivity handles GET /v1/stats/activity
+func (h *StatsHandler) RecentActivity(c *gin.Context) {
+	tenantID := c.GetString("tenant_id")
+
+	if h.store != nil {
+		activities, err := h.store.RecentActivity(c.Request.Context(), tenantID, 20)
+		if err == nil && len(activities) > 0 {
+			c.JSON(http.StatusOK, gin.H{"activities": activities})
+			return
+		}
+	}
+
+	// Fallback
+	h.memoryActivity(c)
+}
+
+func (h *StatsHandler) memoryDashboard(c *gin.Context) {
 	total := atomic.LoadInt64(&h.collector.totalRequests)
 	silentOK := atomic.LoadInt64(&h.collector.silentSuccess)
 	fallback := atomic.LoadInt64(&h.collector.silentFallback)
 	blocked := atomic.LoadInt64(&h.collector.riskBlocked)
 
-	silentRate := float64(0)
-	fallbackRate := float64(0)
+	silentRate, fallbackRate := float64(0), float64(0)
 	if total > 0 {
 		silentRate = float64(silentOK) / float64(total) * 100
 		fallbackRate = float64(fallback) / float64(total) * 100
 	}
 
-	// Estimated OTP cost savings (avg $0.04/OTP saved)
-	costSaved := float64(silentOK) * 0.04
-
-	c.JSON(http.StatusOK, gin.H{
-		"total_verifications": total,
-		"silent_success_rate": round2(silentRate),
-		"fallback_rate":       round2(fallbackRate),
-		"otp_cost_saved":      round2(costSaved),
-		"high_risk_blocked":   blocked,
-		"avg_latency_ms":      1200 + rand.Intn(300),
-		"countries": []gin.H{
-			{"code": "ID", "requests": 45200, "silent_rate": 87.0},
-			{"code": "TH", "requests": 32100, "silent_rate": 89.0},
-			{"code": "PH", "requests": 18900, "silent_rate": 82.0},
-			{"code": "MY", "requests": 15600, "silent_rate": 85.0},
-			{"code": "SG", "requests": 8200, "silent_rate": 92.0},
-			{"code": "VN", "requests": 4892, "silent_rate": 78.0},
+	c.JSON(http.StatusOK, &DashboardStats{
+		TotalVerifications: total,
+		SilentSuccessRate:  round2(silentRate),
+		FallbackRate:       round2(fallbackRate),
+		OTPCostSaved:       round2(float64(silentOK) * 0.04),
+		HighRiskBlocked:    blocked,
+		AvgLatencyMs:       1200 + rand.Intn(300),
+		Countries: []CountryStat{
+			{Code: "ID", Requests: 45200, SilentRate: 87.0},
+			{Code: "TH", Requests: 32100, SilentRate: 89.0},
+			{Code: "PH", Requests: 18900, SilentRate: 82.0},
+			{Code: "MY", Requests: 15600, SilentRate: 85.0},
+			{Code: "SG", Requests: 8200, SilentRate: 92.0},
+			{Code: "VN", Requests: 4892, SilentRate: 78.0},
 		},
 	})
 }
 
-// RecentActivity handles GET /v1/stats/activity
-func (h *StatsHandler) RecentActivity(c *gin.Context) {
-	// In production, this would query the verification_attempts table
+func (h *StatsHandler) memoryActivity(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
-		"activities": []gin.H{
-			{"time": "2m ago", "event": "silent_verification", "country": "ID", "status": "verified", "latency_ms": 820},
-			{"time": "3m ago", "event": "otp_fallback", "country": "TH", "status": "sent", "latency_ms": 410},
-			{"time": "5m ago", "event": "sim_swap_check", "country": "PH", "status": "clean", "latency_ms": 290},
-			{"time": "6m ago", "event": "silent_verification", "country": "MY", "status": "fallback", "latency_ms": 2500},
-			{"time": "8m ago", "event": "risk_verdict", "country": "ID", "status": "blocked", "latency_ms": 45},
-			{"time": "10m ago", "event": "silent_verification", "country": "SG", "status": "verified", "latency_ms": 610},
+		"activities": []ActivityEntry{
+			{Time: "2m ago", Event: "silent_verification", Country: "ID", Status: "verified", LatencyMs: 820},
+			{Time: "3m ago", Event: "otp_fallback", Country: "TH", Status: "sent", LatencyMs: 410},
+			{Time: "5m ago", Event: "sim_swap_check", Country: "PH", Status: "clean", LatencyMs: 290},
+			{Time: "6m ago", Event: "silent_verification", Country: "MY", Status: "fallback", LatencyMs: 2500},
+			{Time: "8m ago", Event: "risk_verdict", Country: "ID", Status: "blocked", LatencyMs: 45},
+			{Time: "10m ago", Event: "silent_verification", Country: "SG", Status: "verified", LatencyMs: 610},
 		},
 	})
+}
+
+// MemoryStatsStore is a no-op that forces fallback to in-memory collector.
+type MemoryStatsStore struct{}
+
+func (s *MemoryStatsStore) Dashboard(_ context.Context, _ string) (*DashboardStats, error) {
+	return &DashboardStats{}, nil
+}
+
+func (s *MemoryStatsStore) RecentActivity(_ context.Context, _ string, _ int) ([]ActivityEntry, error) {
+	return nil, nil
 }
 
 func round2(f float64) float64 {

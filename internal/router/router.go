@@ -12,8 +12,8 @@ import (
 	"github.com/silentpass/silentpass/internal/config"
 	"github.com/silentpass/silentpass/internal/handler"
 	"github.com/silentpass/silentpass/internal/middleware"
-	"github.com/silentpass/silentpass/internal/repository"
 	"github.com/silentpass/silentpass/internal/pkg/auth"
+	"github.com/silentpass/silentpass/internal/repository"
 	"github.com/silentpass/silentpass/internal/service/policy"
 	"github.com/silentpass/silentpass/internal/service/risk"
 	"github.com/silentpass/silentpass/internal/service/verification"
@@ -22,14 +22,16 @@ import (
 
 // Deps holds external dependencies injected into the router.
 type Deps struct {
-	DB    *pgxpool.Pool  // nil = use in-memory repos
-	Redis *redis.Client  // nil = use in-memory rate limiter
+	DB    *pgxpool.Pool // nil = use in-memory repos
+	Redis *redis.Client // nil = use in-memory rate limiter
 }
 
 func New(cfg *config.Config, deps *Deps) *gin.Engine {
 	if cfg.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
+
+	hasPG := deps != nil && deps.DB != nil
 
 	r := gin.New()
 	r.Use(gin.Logger())
@@ -40,14 +42,32 @@ func New(cfg *config.Config, deps *Deps) *gin.Engine {
 	var sessionRepo verification.SessionRepository
 	var tenantResolver middleware.TenantResolver
 
-	if deps != nil && deps.DB != nil {
+	if hasPG {
 		sessionRepo = repository.NewPGSessionRepo(deps.DB)
 		tenantResolver = repository.NewPGTenantRepo(deps.DB)
 	} else {
-		memSessionRepo := repository.NewSessionRepo()
-		memTenantRepo := repository.NewTenantRepo()
-		sessionRepo = memSessionRepo
-		tenantResolver = memTenantRepo
+		sessionRepo = repository.NewSessionRepo()
+		tenantResolver = repository.NewTenantRepo()
+	}
+
+	// --- Store Interfaces (PG or in-memory) ---
+	var policyStore handler.PolicyStore
+	var logsStore handler.LogsStore
+	var billingStore handler.BillingStore
+	var statsStore handler.StatsStore
+
+	if hasPG {
+		policyStore = repository.NewPGPolicyRepo(deps.DB)
+		logsStore = handler.NewPGLogsStore(deps.DB)
+		billingStore = handler.NewPGBillingStore(deps.DB)
+		statsStore = handler.NewPGStatsStore(deps.DB)
+		log.Println("using PostgreSQL for all stores")
+	} else {
+		policyStore = handler.NewMemoryPolicyStore()
+		logsStore = handler.NewMemoryLogsStore()
+		billingStore = handler.NewMemoryBillingStore()
+		statsStore = nil // will use in-memory collector fallback
+		log.Println("using in-memory stores")
 	}
 
 	// --- Telco Adapters ---
@@ -86,22 +106,22 @@ func New(cfg *config.Config, deps *Deps) *gin.Engine {
 
 	// --- Webhook ---
 	webhookStore := webhook.NewMemoryStore()
-	_ = webhook.NewService(webhookStore) // available for event emission
+	_ = webhook.NewService(webhookStore)
 
 	// --- Handlers ---
 	verificationHandler := handler.NewVerificationHandler(verificationSvc)
 	riskHandler := handler.NewRiskHandler(riskSvc)
 	webhookHandler := handler.NewWebhookHandler(webhookStore)
-	policyHandler := handler.NewPolicyHandler()
+	policyHandler := handler.NewPolicyHandler(policyStore)
 	statsCollector := handler.NewStatsCollector()
-	statsHandler := handler.NewStatsHandler(statsCollector)
-	logsHandler := handler.NewLogsHandler(handler.NewLogStore())
-	billingHandler := handler.NewBillingHandler()
+	statsHandler := handler.NewStatsHandler(statsStore, statsCollector)
+	logsHandler := handler.NewLogsHandler(logsStore)
+	billingHandler := handler.NewBillingHandler(billingStore)
 
 	// --- Health ---
 	r.GET("/health", func(c *gin.Context) {
 		status := gin.H{"status": "ok", "service": "silentpass", "storage": "memory"}
-		if deps != nil && deps.DB != nil {
+		if hasPG {
 			status["storage"] = "postgres"
 			if err := deps.DB.Ping(c.Request.Context()); err != nil {
 				status["status"] = "degraded"
@@ -134,13 +154,8 @@ func New(cfg *config.Config, deps *Deps) *gin.Engine {
 		rg.POST("/verdict", riskHandler.Verdict)
 	}
 
-	// Webhook endpoints
-	wg := v1.Group("/webhooks")
-	{
-		wg.POST("", webhookHandler.Create)
-	}
+	v1.POST("/webhooks", webhookHandler.Create)
 
-	// Policy endpoints
 	pg := v1.Group("/policies")
 	{
 		pg.GET("", policyHandler.List)
@@ -149,17 +164,13 @@ func New(cfg *config.Config, deps *Deps) *gin.Engine {
 		pg.DELETE("/:id", policyHandler.Delete)
 	}
 
-	// Stats endpoints
 	sg := v1.Group("/stats")
 	{
 		sg.GET("/dashboard", statsHandler.Dashboard)
 		sg.GET("/activity", statsHandler.RecentActivity)
 	}
 
-	// Logs endpoint
 	v1.GET("/logs", logsHandler.List)
-
-	// Billing endpoint
 	v1.GET("/billing/summary", billingHandler.Summary)
 
 	return r

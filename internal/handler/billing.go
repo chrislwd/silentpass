@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -15,15 +17,47 @@ type BillingEntry struct {
 	Total      float64 `json:"total"`
 }
 
-type BillingHandler struct{}
+type BillingHandler struct {
+	store BillingStore
+}
 
-func NewBillingHandler() *BillingHandler {
-	return &BillingHandler{}
+func NewBillingHandler(store BillingStore) *BillingHandler {
+	return &BillingHandler{store: store}
 }
 
 // Summary handles GET /v1/billing/summary
 func (h *BillingHandler) Summary(c *gin.Context) {
-	// In production, this queries pg_billing via PGBillingRepo.SummaryByTenant
+	tenantID := c.GetString("tenant_id")
+	now := time.Now()
+	from := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	to := from.AddDate(0, 1, 0)
+
+	entries, totalCost, err := h.store.Summary(c.Request.Context(), tenantID, from, to)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to query billing"})
+		return
+	}
+	if entries == nil {
+		entries = []BillingEntry{}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"entries":    entries,
+		"total_cost": totalCost,
+		"period":     from.Format("2006-01"),
+		"currency":   "USD",
+	})
+}
+
+// --- In-Memory BillingStore ---
+
+type MemoryBillingStore struct{}
+
+func NewMemoryBillingStore() *MemoryBillingStore {
+	return &MemoryBillingStore{}
+}
+
+func (s *MemoryBillingStore) Summary(_ context.Context, _ string, _, _ time.Time) ([]BillingEntry, float64, error) {
 	entries := []BillingEntry{
 		{Product: "Silent Verification", Country: "ID", Calls: 45200, Successful: 38420, UnitPrice: 0.03, Total: 1152.60},
 		{Product: "Silent Verification", Country: "TH", Calls: 32100, Successful: 28569, UnitPrice: 0.035, Total: 999.92},
@@ -33,16 +67,9 @@ func (h *BillingHandler) Summary(c *gin.Context) {
 		{Product: "SIM Swap Check", Country: "TH", Calls: 8900, Successful: 8900, UnitPrice: 0.012, Total: 106.80},
 		{Product: "WhatsApp OTP", Country: "ID", Calls: 1200, Successful: 1140, UnitPrice: 0.06, Total: 68.40},
 	}
-
-	var totalCost float64
+	var total float64
 	for _, e := range entries {
-		totalCost += e.Total
+		total += e.Total
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"entries":      entries,
-		"total_cost":   totalCost,
-		"period":       "2026-03",
-		"currency":     "USD",
-	})
+	return entries, total, nil
 }

@@ -43,7 +43,7 @@ func (r *PGPolicyRepo) GetByID(ctx context.Context, id string) (*model.Policy, e
 	return &p, nil
 }
 
-func (r *PGPolicyRepo) ListByTenant(ctx context.Context, tenantID string) ([]*model.Policy, error) {
+func (r *PGPolicyRepo) List(ctx context.Context, tenantID string) ([]*model.Policy, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, tenant_id, name, use_case, strategy, sim_swap_action, countries, priority, active, config, created_at, updated_at
 		FROM policies WHERE tenant_id = $1
@@ -83,10 +83,36 @@ func (r *PGPolicyRepo) FindForUseCase(ctx context.Context, tenantID string, useC
 }
 
 func (r *PGPolicyRepo) Update(ctx context.Context, id string, req *model.UpdatePolicyRequest) error {
-	// Build dynamic update - simplified version
-	_, err := r.pool.Exec(ctx, `
-		UPDATE policies SET updated_at = $1 WHERE id = $2`,
-		time.Now(), id)
+	// Fetch current, apply changes, save
+	p, err := r.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if req.Name != nil {
+		p.Name = *req.Name
+	}
+	if req.Strategy != nil {
+		p.Strategy = model.VerificationType(*req.Strategy)
+	}
+	if req.SIMSwapAction != nil {
+		p.SIMSwapAction = model.Verdict(*req.SIMSwapAction)
+	}
+	if req.Countries != nil {
+		p.Countries = req.Countries
+	}
+	if req.Priority != nil {
+		p.Priority = *req.Priority
+	}
+	if req.Active != nil {
+		p.Active = *req.Active
+	}
+	p.UpdatedAt = time.Now()
+
+	_, err = r.pool.Exec(ctx, `
+		UPDATE policies SET name=$1, strategy=$2, sim_swap_action=$3, countries=$4,
+		       priority=$5, active=$6, updated_at=$7 WHERE id=$8`,
+		p.Name, p.Strategy, p.SIMSwapAction, p.Countries,
+		p.Priority, p.Active, p.UpdatedAt, id)
 	if err != nil {
 		return fmt.Errorf("update policy: %w", err)
 	}

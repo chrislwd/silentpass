@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -10,61 +12,24 @@ import (
 	"github.com/silentpass/silentpass/internal/model"
 )
 
-// PolicyHandler manages policies with in-memory store.
-// Replace with PGPolicyRepo for production.
+// PolicyHandler manages policies via a PolicyStore.
 type PolicyHandler struct {
-	mu       sync.RWMutex
-	policies map[string]*model.Policy
+	store PolicyStore
 }
 
-func NewPolicyHandler() *PolicyHandler {
-	h := &PolicyHandler{
-		policies: make(map[string]*model.Policy),
-	}
-	// Seed default policies
-	h.seed()
-	return h
-}
-
-func (h *PolicyHandler) seed() {
-	defaults := []struct {
-		name, useCase, strategy, simSwap string
-		countries                        []string
-		priority                         int
-	}{
-		{"Signup - Silent First", "signup", "silent_or_otp", "challenge", []string{"ID", "TH", "PH", "MY"}, 10},
-		{"Login - Low Friction", "login", "silent", "challenge", []string{"ID", "TH", "PH", "MY", "SG"}, 10},
-		{"Transaction - Strict", "transaction", "silent_or_otp", "block", []string{"ID", "TH"}, 10},
-		{"Phone Change - Max Security", "phone_change", "otp_only", "block", []string{"*"}, 10},
-	}
-	for _, d := range defaults {
-		p := &model.Policy{
-			ID:            uuid.New().String(),
-			Name:          d.name,
-			UseCase:       model.UseCase(d.useCase),
-			Strategy:      model.VerificationType(d.strategy),
-			SIMSwapAction: model.Verdict(d.simSwap),
-			Countries:     d.countries,
-			Priority:      d.priority,
-			Active:        true,
-			Config:        map[string]interface{}{},
-			CreatedAt:     time.Now(),
-			UpdatedAt:     time.Now(),
-		}
-		h.policies[p.ID] = p
-	}
+func NewPolicyHandler(store PolicyStore) *PolicyHandler {
+	return &PolicyHandler{store: store}
 }
 
 // List handles GET /v1/policies
 func (h *PolicyHandler) List(c *gin.Context) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	var list []*model.Policy
-	for _, p := range h.policies {
-		list = append(list, p)
+	tenantID := c.GetString("tenant_id")
+	policies, err := h.store.List(c.Request.Context(), tenantID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to list policies"})
+		return
 	}
-	c.JSON(http.StatusOK, gin.H{"policies": list})
+	c.JSON(http.StatusOK, gin.H{"policies": policies})
 }
 
 // Create handles POST /v1/policies
@@ -92,9 +57,10 @@ func (h *PolicyHandler) Create(c *gin.Context) {
 		UpdatedAt:     now,
 	}
 
-	h.mu.Lock()
-	h.policies[p.ID] = p
-	h.mu.Unlock()
+	if err := h.store.Create(c.Request.Context(), p); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create policy"})
+		return
+	}
 
 	c.JSON(http.StatusCreated, p)
 }
@@ -103,21 +69,100 @@ func (h *PolicyHandler) Create(c *gin.Context) {
 func (h *PolicyHandler) Update(c *gin.Context) {
 	id := c.Param("id")
 
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	p, ok := h.policies[id]
-	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "policy not found"})
-		return
-	}
-
 	var req model.UpdatePolicyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
+	if err := h.store.Update(c.Request.Context(), id, &req); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "policy not found"})
+		return
+	}
+
+	p, _ := h.store.GetByID(c.Request.Context(), id)
+	c.JSON(http.StatusOK, p)
+}
+
+// Delete handles DELETE /v1/policies/:id
+func (h *PolicyHandler) Delete(c *gin.Context) {
+	id := c.Param("id")
+	if err := h.store.Delete(c.Request.Context(), id); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "policy not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": true})
+}
+
+// --- In-Memory PolicyStore ---
+
+type MemoryPolicyStore struct {
+	mu       sync.RWMutex
+	policies map[string]*model.Policy
+}
+
+func NewMemoryPolicyStore() *MemoryPolicyStore {
+	s := &MemoryPolicyStore{policies: make(map[string]*model.Policy)}
+	s.seed()
+	return s
+}
+
+func (s *MemoryPolicyStore) seed() {
+	defaults := []struct {
+		name, useCase, strategy, simSwap string
+		countries                        []string
+	}{
+		{"Signup - Silent First", "signup", "silent_or_otp", "challenge", []string{"ID", "TH", "PH", "MY"}},
+		{"Login - Low Friction", "login", "silent", "challenge", []string{"ID", "TH", "PH", "MY", "SG"}},
+		{"Transaction - Strict", "transaction", "silent_or_otp", "block", []string{"ID", "TH"}},
+		{"Phone Change - Max Security", "phone_change", "otp_only", "block", []string{"*"}},
+	}
+	for _, d := range defaults {
+		p := &model.Policy{
+			ID: uuid.New().String(), Name: d.name,
+			UseCase: model.UseCase(d.useCase), Strategy: model.VerificationType(d.strategy),
+			SIMSwapAction: model.Verdict(d.simSwap), Countries: d.countries,
+			Priority: 10, Active: true, Config: map[string]interface{}{},
+			CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		}
+		s.policies[p.ID] = p
+	}
+}
+
+func (s *MemoryPolicyStore) List(_ context.Context, _ string) ([]*model.Policy, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var list []*model.Policy
+	for _, p := range s.policies {
+		list = append(list, p)
+	}
+	return list, nil
+}
+
+func (s *MemoryPolicyStore) GetByID(_ context.Context, id string) (*model.Policy, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	p, ok := s.policies[id]
+	if !ok {
+		return nil, fmt.Errorf("not found")
+	}
+	return p, nil
+}
+
+func (s *MemoryPolicyStore) Create(_ context.Context, p *model.Policy) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.policies[p.ID] = p
+	return nil
+}
+
+func (s *MemoryPolicyStore) Update(_ context.Context, id string, req *model.UpdatePolicyRequest) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.policies[id]
+	if !ok {
+		return fmt.Errorf("not found")
+	}
 	if req.Name != nil {
 		p.Name = *req.Name
 	}
@@ -137,22 +182,15 @@ func (h *PolicyHandler) Update(c *gin.Context) {
 		p.Active = *req.Active
 	}
 	p.UpdatedAt = time.Now()
-
-	c.JSON(http.StatusOK, p)
+	return nil
 }
 
-// Delete handles DELETE /v1/policies/:id
-func (h *PolicyHandler) Delete(c *gin.Context) {
-	id := c.Param("id")
-
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	if _, ok := h.policies[id]; !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "policy not found"})
-		return
+func (s *MemoryPolicyStore) Delete(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.policies[id]; !ok {
+		return fmt.Errorf("not found")
 	}
-
-	delete(h.policies, id)
-	c.JSON(http.StatusOK, gin.H{"deleted": true})
+	delete(s.policies, id)
+	return nil
 }
