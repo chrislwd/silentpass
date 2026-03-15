@@ -1,6 +1,7 @@
 package router
 
 import (
+	"log"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -49,9 +50,24 @@ func New(cfg *config.Config, deps *Deps) *gin.Engine {
 		tenantResolver = memTenantRepo
 	}
 
-	// --- Adapters ---
+	// --- Telco Adapters ---
 	telcoRouter := telco.NewRouter()
-	telcoRouter.Register(telco.NewSandboxAdapter())
+	if cfg.ProvidersConfig != "" {
+		providersCfg, err := telco.LoadProvidersConfig(cfg.ProvidersConfig)
+		if err != nil {
+			log.Printf("WARNING: failed to load providers config: %v, using sandbox", err)
+			telcoRouter.Register(telco.NewSandboxAdapter())
+		} else {
+			if err := telco.BuildAdapters(providersCfg, telcoRouter); err != nil {
+				log.Printf("WARNING: failed to build adapters: %v, using sandbox", err)
+				telcoRouter.Register(telco.NewSandboxAdapter())
+			} else {
+				log.Printf("loaded %d telco provider(s) from config", len(providersCfg.Providers))
+			}
+		}
+	} else {
+		telcoRouter.Register(telco.NewSandboxAdapter())
+	}
 
 	otpRouter := otp.NewRouter()
 	sandboxOTP := otp.NewSandboxProvider()

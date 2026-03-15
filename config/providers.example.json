@@ -1,0 +1,51 @@
+{
+  "providers": [
+    {
+      "type": "sandbox",
+      "name": "Sandbox (Development)",
+      "countries": ["ID", "TH", "PH", "MY", "SG", "VN", "BR", "MX"],
+      "enabled": true
+    },
+    {
+      "type": "ipification",
+      "name": "ipification SEA",
+      "base_url": "https://api.ipification.com",
+      "token_url": "https://auth.ipification.com/oauth2/token",
+      "client_id": "your-client-id",
+      "client_secret": "your-client-secret",
+      "countries": ["ID", "TH", "PH", "MY", "SG"],
+      "enabled": false
+    },
+    {
+      "type": "vonage",
+      "name": "Vonage Network APIs",
+      "base_url": "https://api-eu.vonage.com",
+      "app_id": "your-vonage-app-id",
+      "private_key": "/path/to/vonage-private.key",
+      "countries": ["DE", "ES", "IT", "GB"],
+      "enabled": false
+    },
+    {
+      "type": "camara",
+      "name": "Telefonica Open Gateway",
+      "base_url": "https://opengateway.telefonica.com/api",
+      "token_url": "https://opengateway.telefonica.com/oauth/token",
+      "client_id": "your-client-id",
+      "client_secret": "your-client-secret",
+      "provider_name": "telefonica",
+      "countries": ["ES", "BR", "MX", "AR"],
+      "enabled": false
+    },
+    {
+      "type": "camara",
+      "name": "Singtel Open Gateway",
+      "base_url": "https://api.singtel.com/opengateway",
+      "token_url": "https://api.singtel.com/oauth2/token",
+      "client_id": "your-client-id",
+      "client_secret": "your-client-secret",
+      "provider_name": "singtel",
+      "countries": ["SG", "AU"],
+      "enabled": false
+    }
+  ]
+}

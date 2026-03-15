@@ -6,11 +6,12 @@ import (
 )
 
 type Config struct {
-	Port        string
-	DatabaseURL string
-	RedisURL    string
-	JWTSecret   string
-	Environment string
+	Port            string
+	DatabaseURL     string
+	RedisURL        string
+	JWTSecret       string
+	Environment     string
+	ProvidersConfig string // path to providers.json
 }
 
 func Load() (*Config, error) {
@@ -19,7 +20,8 @@ func Load() (*Config, error) {
 		DatabaseURL: getEnv("DATABASE_URL", "postgres://localhost:5432/silentpass?sslmode=disable"),
 		RedisURL:    getEnv("REDIS_URL", "redis://localhost:6379/0"),
 		JWTSecret:   getEnv("JWT_SECRET", ""),
-		Environment: getEnv("ENVIRONMENT", "development"),
+		Environment:     getEnv("ENVIRONMENT", "development"),
+		ProvidersConfig: getEnv("PROVIDERS_CONFIG", ""),
 	}
 
 	if cfg.JWTSecret == "" && cfg.Environment == "production" {
