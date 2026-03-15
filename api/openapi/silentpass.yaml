@@ -1,0 +1,318 @@
+openapi: 3.0.3
+info:
+  title: SilentPass API
+  description: Mobile Identity Verification & Fraud Prevention Platform
+  version: 1.0.0
+  contact:
+    name: SilentPass Team
+
+servers:
+  - url: https://api.silentpass.io/v1
+    description: Production
+  - url: https://sandbox.silentpass.io/v1
+    description: Sandbox
+
+security:
+  - ApiKeyAuth: []
+
+paths:
+  /verification/session:
+    post:
+      summary: Create verification session
+      operationId: createSession
+      tags: [Verification]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+      responses:
+        '201':
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateSessionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /verification/silent:
+    post:
+      summary: Execute silent verification
+      operationId: silentVerify
+      tags: [Verification]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SilentVerifyRequest'
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SilentVerifyResponse'
+
+  /verification/otp/send:
+    post:
+      summary: Send OTP
+      operationId: sendOTP
+      tags: [Verification]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OTPSendRequest'
+      responses:
+        '200':
+          description: OTP sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OTPSendResponse'
+
+  /verification/otp/check:
+    post:
+      summary: Verify OTP code
+      operationId: checkOTP
+      tags: [Verification]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OTPCheckRequest'
+      responses:
+        '200':
+          description: OTP check result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OTPCheckResponse'
+
+  /risk/sim-swap:
+    post:
+      summary: Check SIM swap status
+      operationId: checkSIMSwap
+      tags: [Risk]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SIMSwapRequest'
+      responses:
+        '200':
+          description: SIM swap check result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SIMSwapResponse'
+
+  /risk/verdict:
+    post:
+      summary: Get unified risk verdict
+      operationId: getVerdict
+      tags: [Risk]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerdictRequest'
+      responses:
+        '200':
+          description: Risk verdict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerdictResponse'
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    CreateSessionRequest:
+      type: object
+      required: [app_id, phone_number, country_code, verification_type, use_case]
+      properties:
+        app_id:
+          type: string
+        phone_number:
+          type: string
+        country_code:
+          type: string
+        verification_type:
+          type: string
+          enum: [silent, silent_or_otp, otp_only]
+        use_case:
+          type: string
+          enum: [signup, login, transaction, phone_change]
+        device_context:
+          type: object
+          properties:
+            ip_address:
+              type: string
+            user_agent:
+              type: string
+        callback_url:
+          type: string
+
+    CreateSessionResponse:
+      type: object
+      properties:
+        session_id:
+          type: string
+        recommended_action:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+
+    SilentVerifyRequest:
+      type: object
+      required: [session_id]
+      properties:
+        session_id:
+          type: string
+
+    SilentVerifyResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [verified, fallback_required, failed]
+        confidence_score:
+          type: number
+        telco_signal:
+          type: string
+        token:
+          type: string
+
+    OTPSendRequest:
+      type: object
+      required: [session_id, channel]
+      properties:
+        session_id:
+          type: string
+        channel:
+          type: string
+          enum: [sms, whatsapp, voice]
+        template_id:
+          type: string
+        locale:
+          type: string
+
+    OTPSendResponse:
+      type: object
+      properties:
+        delivery_status:
+          type: string
+        resend_after_seconds:
+          type: integer
+
+    OTPCheckRequest:
+      type: object
+      required: [session_id, code]
+      properties:
+        session_id:
+          type: string
+        code:
+          type: string
+
+    OTPCheckResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [verified, failed]
+        token:
+          type: string
+        attempts_left:
+          type: integer
+
+    SIMSwapRequest:
+      type: object
+      required: [phone_number, country_code]
+      properties:
+        phone_number:
+          type: string
+        country_code:
+          type: string
+
+    SIMSwapResponse:
+      type: object
+      properties:
+        sim_swap_detected:
+          type: boolean
+        last_change_time:
+          type: string
+        risk_level:
+          type: string
+          enum: [low, medium, high]
+        recommendation:
+          type: string
+          enum: [allow, challenge, block, review]
+
+    VerdictRequest:
+      type: object
+      required: [session_id]
+      properties:
+        session_id:
+          type: string
+        verification_result:
+          type: string
+        sim_swap_result:
+          $ref: '#/components/schemas/SIMSwapResponse'
+        device_status:
+          type: object
+        policy_id:
+          type: string
+
+    VerdictResponse:
+      type: object
+      properties:
+        verdict:
+          type: string
+          enum: [allow, challenge, block, review]
+        risk_level:
+          type: string
+          enum: [low, medium, high]
+        reasons:
+          type: array
+          items:
+            type: string
+        action_required:
+          type: string
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
