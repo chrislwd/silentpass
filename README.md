@@ -1,5 +1,7 @@
 # SilentPass
 
+[中文文档](./README_CN.md)
+
 **Mobile Identity Verification & Fraud Prevention Platform**
 
 SilentPass is a developer-facing platform that leverages carrier Network APIs (CAMARA / Open Gateway) to provide frictionless phone number verification, silent authentication, SIM swap detection, and intelligent OTP fallback — all through a unified API.

@@ -1,5 +1,7 @@
 # SilentPass
 
+[English](./README.md)
+
 **基于运营商 Network APIs 的无感手机号验证与反欺诈平台**
 
 SilentPass 是一个面向开发者的平台，通过接入运营商 Network APIs（CAMARA / Open Gateway），实现无感手机号验证、静默认证、SIM Swap 检测和智能 OTP 降级 —— 统一 API、一次集成。
