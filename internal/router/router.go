@@ -11,10 +11,12 @@ import (
 	"github.com/silentpass/silentpass/internal/adapter/telco"
 	"github.com/silentpass/silentpass/internal/config"
 	"github.com/silentpass/silentpass/internal/handler"
+	"github.com/silentpass/silentpass/internal/metrics"
 	"github.com/silentpass/silentpass/internal/middleware"
 	"github.com/silentpass/silentpass/internal/pkg/auth"
 	"github.com/silentpass/silentpass/internal/repository"
 	"github.com/silentpass/silentpass/internal/service/policy"
+	"github.com/silentpass/silentpass/internal/service/pricing"
 	"github.com/silentpass/silentpass/internal/service/risk"
 	"github.com/silentpass/silentpass/internal/service/verification"
 	"github.com/silentpass/silentpass/internal/service/webhook"
@@ -37,6 +39,7 @@ func New(cfg *config.Config, deps *Deps) *gin.Engine {
 	r.Use(gin.Logger())
 	r.Use(gin.Recovery())
 	r.Use(middleware.CORS())
+	r.Use(metrics.RequestMetrics(metrics.Global))
 
 	// --- Repositories ---
 	var sessionRepo verification.SessionRepository
@@ -178,6 +181,29 @@ func New(cfg *config.Config, deps *Deps) *gin.Engine {
 
 	v1.GET("/logs", logsHandler.List)
 	v1.GET("/billing/summary", billingHandler.Summary)
+
+	// --- Pricing endpoint ---
+	pricingEngine := pricing.NewEngine()
+	v1.GET("/pricing/plans", func(c *gin.Context) {
+		c.JSON(200, gin.H{"plans": pricingEngine.ListPlans()})
+	})
+	v1.POST("/pricing/calculate", func(c *gin.Context) {
+		var req struct {
+			ProductType string `json:"product_type" binding:"required"`
+			CountryCode string `json:"country_code" binding:"required"`
+			Volume      int    `json:"volume"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		tenantID := c.GetString("tenant_id")
+		result := pricingEngine.CalculatePrice(c.Request.Context(), tenantID, req.ProductType, req.CountryCode, req.Volume)
+		c.JSON(200, result)
+	})
+
+	// --- Metrics endpoint (no auth) ---
+	r.GET("/metrics", metrics.Global.Handler())
 
 	// --- Auth endpoints (no API key required) ---
 	authGroup := r.Group("/v1/auth")
