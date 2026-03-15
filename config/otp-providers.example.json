@@ -1,0 +1,37 @@
+{
+  "providers": [
+    {
+      "type": "sandbox",
+      "name": "Sandbox OTP",
+      "channels": ["sms", "whatsapp", "voice"],
+      "enabled": true
+    },
+    {
+      "type": "twilio",
+      "name": "Twilio Verify",
+      "channels": ["sms", "voice"],
+      "account_sid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "auth_token": "your-auth-token",
+      "service_sid": "VAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "enabled": false
+    },
+    {
+      "type": "vonage",
+      "name": "Vonage Verify v2",
+      "channels": ["sms", "voice"],
+      "api_key": "your-api-key",
+      "api_secret": "your-api-secret",
+      "brand": "SilentPass",
+      "enabled": false
+    },
+    {
+      "type": "whatsapp",
+      "name": "WhatsApp Business",
+      "channels": ["whatsapp"],
+      "phone_number_id": "your-phone-number-id",
+      "access_token": "your-access-token",
+      "template_name": "silentpass_otp",
+      "enabled": false
+    }
+  ]
+}
