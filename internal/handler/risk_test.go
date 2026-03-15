@@ -21,7 +21,7 @@ func setupRiskRouter() *gin.Engine {
 	tenantRepo := repository.NewTenantRepo()
 	telcoRouter := telco.NewRouter()
 	telcoRouter.Register(telco.NewSandboxAdapter())
-	policyEngine := policy.NewEngine()
+	policyEngine := policy.NewEngine(nil)
 	riskSvc := risk.NewService(telcoRouter, policyEngine)
 	h := NewRiskHandler(riskSvc)
 

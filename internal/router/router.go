@@ -101,7 +101,7 @@ func New(cfg *config.Config, deps *Deps) *gin.Engine {
 	// --- Services ---
 	verificationSvc := verification.NewService(sessionRepo, telcoRouter, otpRouter)
 	verificationSvc.SetTokenService(tokenSvc)
-	policyEngine := policy.NewEngine()
+	policyEngine := policy.NewEngine(policyStore)
 	riskSvc := risk.NewService(telcoRouter, policyEngine)
 
 	// --- Webhook ---

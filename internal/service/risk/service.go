@@ -16,10 +16,24 @@ type PolicyEngine interface {
 }
 
 type PolicyInput struct {
+	// Verification context
 	VerificationResult string
-	SIMSwapResult      *model.SIMSwapResponse
-	DeviceStatus       map[string]interface{}
-	PolicyID           string
+	ConfidenceScore    float64
+	VerificationMethod string // silent, sms, whatsapp, voice
+
+	// Risk signals
+	SIMSwapResult *model.SIMSwapResponse
+	DeviceStatus  map[string]interface{}
+	DeviceChanged bool
+
+	// Request context
+	CountryCode string
+	Operator    string
+	UseCase     string
+	PolicyID    string
+
+	// Computed
+	RiskScore float64
 }
 
 type Service struct {
